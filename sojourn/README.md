@@ -1,6 +1,6 @@
 # Sojourn
 
-*Plan the days, mind the budget, never miss a departure.*
+*We plan the days, mind the budget, and we never miss a departure.*
 
 A travel itinerary + finance planner + reminders app, now multi-user. One **Trip** is the hub; itinerary stops, expenses, and reminders all hang off it, and every trip belongs to a **User**. The two optional links are the signature of the design: an expense can belong to a specific stop ("dinner owns its $52") and a reminder can be pinned to one too ("leave 2h before the flight").
 
