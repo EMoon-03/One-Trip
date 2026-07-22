@@ -4,7 +4,7 @@
 
 A personal travel itinerary + finance planner + reminders app, now multi-user. One **Trip** is the hub; itinerary stops, expenses, and reminders all hang off it, and every trip belongs to a **User**. The two optional links are the signature of the design: an expense can belong to a specific stop ("dinner owns its $52") and a reminder can be pinned to one too ("leave 2h before the flight").
 
-**Stack:** FastAPI + SQLModel · MySQL (or SQLite if zero-config dev is more comfortable) · JWT auth (bcrypt + PyJWT) · React 19 + TypeScript · axios + TanStack Query · Recharts · Leaflet/OpenStreetMap **or** Google Maps.
+**Stack:** FastAPI + SQLModel · MySQL · JWT auth (bcrypt + PyJWT) · React 19 + TypeScript · axios + TanStack Query · Recharts · Leaflet/OpenStreetMap **or** Google Maps.
 
 ```
 frontend (Vite :5173)                        backend (uvicorn :8000)
