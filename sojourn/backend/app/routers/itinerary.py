@@ -15,8 +15,12 @@ from ..models import (
     ItineraryItemRead,
     ItineraryItemUpdate,
     Reminder,
+    Trip,
     User,
 )
+from ..geo.refresh import stamp_coords
+from ..scheduling import ScheduleError, freeze, reschedule_for_stop
+from ..timeutil import utcnow
 from .trips import get_owned_trip
 
 router = APIRouter(prefix="/api", tags=["itinerary"])
@@ -53,6 +57,7 @@ def create_item(
 ):
     get_owned_trip(trip_id, user, session)
     item = ItineraryItem(**payload.model_dump(), trip_id=trip_id)
+    stamp_coords(item, utcnow())
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -67,8 +72,20 @@ def update_item(
     session: Session = Depends(get_session),
 ):
     item = get_owned_item(item_id, user, session)
-    item.sqlmodel_update(payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    previous = (item.lat, item.lng, item.place_id)
+    item.sqlmodel_update(data)
+    stamp_coords(item, utcnow(), previous)
     session.add(item)
+
+    # "2h before the flight" must follow the flight when it moves.
+    if {"date", "start_time", "timezone"} & data.keys():
+        trip = session.get(Trip, item.trip_id)
+        try:
+            reschedule_for_stop(item, trip, session)  # type: ignore[arg-type]
+        except ScheduleError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
     session.commit()
     session.refresh(item)
     return item
@@ -88,7 +105,11 @@ def delete_item(
     for expense in session.exec(select(Expense).where(Expense.activity_id == item_id)):
         expense.activity_id = None
         session.add(expense)
+    trip = session.get(Trip, item.trip_id)
     for reminder in session.exec(select(Reminder).where(Reminder.activity_id == item_id)):
+        if reminder.offset_minutes is not None:
+            # "2h before the flight" with no flight: keep the moment it had.
+            freeze(reminder, trip, item)  # type: ignore[arg-type]
         reminder.activity_id = None
         session.add(reminder)
 

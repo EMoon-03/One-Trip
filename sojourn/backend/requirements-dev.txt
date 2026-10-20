@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=8.0,<10
+aiosmtpd>=1.4,<2      # local SMTP server for trying email reminders: see docs/reminders.md
