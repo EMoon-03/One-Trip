@@ -43,7 +43,7 @@ function LeafletTripMap({ stops }: { stops: Stop[] }) {
       />
       <Polyline
         positions={stops.map((s) => [s.lat, s.lng] as [number, number])}
-        pathOptions={{ color: '#1c4fd8', weight: 2.5, opacity: 0.7, dashArray: '6 6' }}
+        pathOptions={{ color: '#16233a', weight: 2.5, opacity: 0.55 }}
       />
       {stops.map((stop) => (
         <CircleMarker
@@ -91,8 +91,8 @@ function RouteLine({ stops }: { stops: Stop[] }) {
     if (!map || stops.length < 2) return
     const line = new google.maps.Polyline({
       path: stops.map((s) => ({ lat: s.lat, lng: s.lng })),
-      strokeColor: '#1c4fd8',
-      strokeOpacity: 0.7,
+      strokeColor: '#16233a',
+      strokeOpacity: 0.55,
       strokeWeight: 2.5,
     })
     line.setMap(map)
@@ -135,18 +135,24 @@ export default function TripMap({ trip }: { trip: Trip }) {
   const { data: config } = useConfig()
   const { data: items = [], isLoading } = useItinerary(trip.id)
 
-  const stops = items.filter(hasCoords)
   const googleKey = config?.google_maps_browser_key ?? null
+  const located = items.filter(hasCoords)
+  // Google's terms: coordinates from Google Places may only be shown on a
+  // Google map. Without the browser key we draw OpenStreetMap, so those stops
+  // are left off (they come back as soon as GOOGLE_MAPS_BROWSER_KEY is set).
+  const stops = googleKey ? located : located.filter((s) => s.coords_source !== 'google')
+  const hiddenGoogle = located.length - stops.length
 
   if (isLoading) return <p className="empty">Loading map…</p>
 
   if (stops.length === 0) {
     return (
-      <div className="card empty-card">
-        <h3>Nothing to map yet</h3>
+      <div className="empty-state">
+        <h3>Nothing on the map yet</h3>
         <p>
-          Stops added with the location search carry coordinates and show up here as stations on
-          the route.
+          {hiddenGoogle > 0
+            ? `${hiddenGoogle} stop${hiddenGoogle === 1 ? ' has a' : 's have'} a Google location, which can only be shown on Google Maps. Set GOOGLE_MAPS_BROWSER_KEY on the server to see ${hiddenGoogle === 1 ? 'it' : 'them'}.`
+            : 'When you add a stop, pick its place from the search results and it will appear here.'}
         </p>
       </div>
     )
@@ -154,15 +160,17 @@ export default function TripMap({ trip }: { trip: Trip }) {
 
   return (
     <div className="tab-body">
-      <div className="map-meta mono">
-        <span>
-          {stops.length} of {items.length} stop{items.length === 1 ? '' : 's'} on the map
-        </span>
-        <span className="map-provider">{googleKey ? 'Google Maps' : 'OpenStreetMap · Leaflet'}</span>
-      </div>
-      <div className="card map-wrap">
+      <div className="map-wrap">
         {googleKey ? <GoogleTripMap stops={stops} apiKey={googleKey} /> : <LeafletTripMap stops={stops} />}
       </div>
+      <p className="map-caption">
+        {stops.length === items.length
+          ? `All ${items.length} stops, in visiting order.`
+          : `${stops.length} of ${items.length} stops shown.`}
+        {hiddenGoogle > 0 &&
+          ` ${hiddenGoogle} with a Google location ${hiddenGoogle === 1 ? 'needs' : 'need'} Google Maps, which isn't set up.`}
+        {stops.length + hiddenGoogle < items.length && ` Pick a place from search on the others to add them.`}
+      </p>
     </div>
   )
 }

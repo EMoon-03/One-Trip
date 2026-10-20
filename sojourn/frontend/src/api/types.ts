@@ -5,6 +5,7 @@ export interface User {
   id: number
   email: string
   display_name: string
+  email_notifications: boolean
 }
 
 export interface TokenResponse {
@@ -19,17 +20,32 @@ export interface RegisterPayload {
   password: string
 }
 
+/**
+ * A search result. Google results arrive WITHOUT coordinates (lat/lng null):
+ * they're fetched with /api/places/details when the person picks one, which
+ * also closes the Google billing session. OpenStreetMap results include them.
+ */
 export interface PlaceResult {
   name: string
   address: string | null
+  label: string // short form for a destination field: "Tokyo, Japan"
+  place_id: string
+  lat: number | null
+  lng: number | null
+  provider: 'google' | 'nominatim'
+}
+
+export interface PlaceDetails {
   place_id: string
   lat: number
   lng: number
-  provider: 'google' | 'nominatim'
+  address: string | null
+  provider: 'google'
 }
 
 export interface AppConfig {
   google_maps_browser_key: string | null
+  place_search: 'google' | 'nominatim' | 'unavailable'
 }
 
 export type ItineraryCategory =
@@ -61,6 +77,7 @@ export interface Trip {
   base_currency: string
   total_budget: number
   notes: string | null
+  timezone: string // IANA zone of the destination, e.g. "Asia/Tokyo"
 }
 
 export interface TripCreate {
@@ -71,6 +88,7 @@ export interface TripCreate {
   base_currency: string
   total_budget: number
   notes?: string | null
+  timezone: string
 }
 
 export interface ItineraryItem {
@@ -86,6 +104,9 @@ export interface ItineraryItem {
   lat: number | null
   lng: number | null
   notes: string | null
+  timezone: string | null // null = the trip's zone
+  coords_source: 'google' | 'nominatim' | 'manual' | null // set by the server
+  coords_fetched_at: string | null
 }
 
 export interface ItineraryItemCreate {
@@ -99,6 +120,7 @@ export interface ItineraryItemCreate {
   lat?: number | null
   lng?: number | null
   notes?: string | null
+  timezone?: string | null
 }
 
 export interface Expense {
@@ -123,20 +145,39 @@ export interface ExpenseCreate {
   currency?: string | null
 }
 
+export type DeliveryStatus = 'pending' | 'sent' | 'failed' | 'skipped'
+
+export interface Delivery {
+  channel: 'email' | 'push' | 'console' | string
+  status: DeliveryStatus
+  attempts: number
+  sent_at: string | null
+  last_error: string | null
+}
+
 export interface Reminder {
   id: number
   trip_id: number
   activity_id: number | null
   message: string
-  remind_at: string
   type: ReminderType
   status: ReminderStatus
+  remind_at: string            // the UTC moment, e.g. "2026-11-09T01:30:00Z"
+  local_time: string           // wall clock in effective_timezone, "2026-11-09T10:30:00"
+  timezone: string | null      // chosen zone; null = follow the trip
+  effective_timezone: string
+  offset_minutes: number | null // set = "N minutes before the linked stop"
+  dispatched_at: string | null
+  deliveries: Delivery[]
 }
 
+/** Either { remind_at (+ timezone) } or { offset_minutes + activity_id }. */
 export interface ReminderCreate {
   message: string
-  remind_at: string
   type: ReminderType
+  remind_at?: string | null
+  timezone?: string | null
+  offset_minutes?: number | null
   activity_id?: number | null
 }
 
@@ -165,4 +206,22 @@ export interface TripSummary {
   pct_used: number
   by_category: CategoryBreakdown[]
   daily_spend: DailySpend[]
+}
+
+// PATCH bodies: every field optional; sending null clears a nullable field.
+export type TripUpdate = Partial<TripCreate>
+export type ItineraryItemUpdate = Partial<ItineraryItemCreate>
+export type ExpenseUpdate = Partial<ExpenseCreate>
+export type ReminderUpdate = Partial<ReminderCreate> & { status?: ReminderStatus }
+
+export interface NotificationConfig {
+  email: { available: boolean; enabled: boolean; address: string }
+  push: { available: boolean; public_key: string | null; devices: number }
+  console: boolean
+}
+
+export interface NotificationTestResult {
+  channel: string
+  ok: boolean
+  detail: string
 }
