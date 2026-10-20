@@ -1,0 +1,22 @@
+# secrets — .env holds SECRET_KEY, SMTP passwords and the VAPID private key
+.env
+.env.*
+!.env.example
+
+# local data
+*.db
+maildir/
+
+# python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# node
+node_modules/
+dist/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/

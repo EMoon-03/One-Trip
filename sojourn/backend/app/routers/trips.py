@@ -21,6 +21,7 @@ from ..models import (
     TripUpdate,
     User,
 )
+from ..scheduling import reschedule_for_trip
 
 router = APIRouter(prefix="/api/trips", tags=["trips"])
 
@@ -75,8 +76,23 @@ def update_trip(
     session: Session = Depends(get_session),
 ):
     trip = get_owned_trip(trip_id, user, session)
-    trip.sqlmodel_update(payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+
+    # Same rule as create, checked against the dates the trip WILL have —
+    # a PATCH may change only one end of the range.
+    start = data.get("start_date") or trip.start_date
+    end = data.get("end_date") or trip.end_date
+    if end < start:
+        raise HTTPException(status_code=422, detail="end_date is before start_date")
+    if "timezone" in data and not data["timezone"]:
+        raise HTTPException(status_code=422, detail="timezone can't be empty")
+    zone_changed = "timezone" in data and data["timezone"] != trip.timezone
+
+    trip.sqlmodel_update(data)
     session.add(trip)
+    if zone_changed:
+        # Wall-clock times stay put; the UTC moments they mean move.
+        reschedule_for_trip(trip, session)
     session.commit()
     session.refresh(trip)
     return trip

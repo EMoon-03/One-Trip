@@ -3,63 +3,14 @@
 Run from backend/:  python -m pytest -q
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
-from sqlmodel.pool import StaticPool
-
-from app.database import get_session
-from app.main import app
+from .helpers import make_trip, signup
 
 
-@pytest.fixture()
-def client():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,  # one shared in-memory DB across connections
-    )
-    SQLModel.metadata.create_all(engine)
-
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    yield TestClient(app)
-    app.dependency_overrides.clear()
-
-
-def signup(client: TestClient, email="eddie@example.com", name="Eddie") -> dict:
-    """Register a user, return the Authorization header dict."""
-    resp = client.post(
-        "/api/auth/register",
-        json={"email": email, "display_name": name, "password": "wanderlust1"},
-    )
-    assert resp.status_code == 201, resp.text
-    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
-
-
-@pytest.fixture()
-def auth(client):
-    return signup(client)
-
-
-def make_trip(client: TestClient, auth: dict, **overrides) -> int:
-    payload = {
-        "name": "Test Trip",
-        "destination": "Testville",
-        "start_date": "2026-10-01",
-        "end_date": "2026-10-07",
-        "base_currency": "USD",
-        "total_budget": 1000.0,
-    }
-    payload.update(overrides)
-    resp = client.post("/api/trips", json=payload, headers=auth)
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+def _utc_iso(delta: timedelta) -> str:
+    """An aware ISO timestamp relative to now — unambiguous on any machine."""
+    return (datetime.now(timezone.utc) + delta).isoformat(timespec="minutes")
 
 
 # --------------------------------------------------------------------------
@@ -151,7 +102,7 @@ def test_due_reminders_scoped_per_user(client):
     auth_a = signup(client, email="a2@example.com")
     auth_b = signup(client, email="b2@example.com")
     trip_a = make_trip(client, auth_a)
-    past = (datetime.now() - timedelta(hours=1)).isoformat(timespec="minutes")
+    past = _utc_iso(-timedelta(hours=1))
     client.post(
         f"/api/trips/{trip_a}/reminders",
         json={"message": "A's task", "remind_at": past},
@@ -188,6 +139,19 @@ def test_trip_rejects_backwards_dates(client, auth):
         headers=auth,
     )
     assert resp.status_code == 422
+
+
+def test_update_trip_rejects_backwards_dates(client, auth):
+    trip_id = make_trip(client, auth)
+    trip = client.get(f"/api/trips/{trip_id}", headers=auth).json()
+    # Moving only the end date before the existing start must fail…
+    resp = client.patch(
+        f"/api/trips/{trip_id}", json={"end_date": "2000-01-01"}, headers=auth
+    )
+    assert resp.status_code == 422
+    # …and nothing is saved.
+    after = client.get(f"/api/trips/{trip_id}", headers=auth).json()
+    assert after["end_date"] == trip["end_date"]
 
 
 def test_update_trip(client, auth):
@@ -366,8 +330,8 @@ def test_summary_with_zero_budget_has_no_division_error(client, auth):
 
 def test_due_reminders_only_pending_and_past(client, auth):
     trip_id = make_trip(client, auth, name="Reminder Trip")
-    past = (datetime.now() - timedelta(hours=2)).isoformat(timespec="minutes")
-    future = (datetime.now() + timedelta(days=2)).isoformat(timespec="minutes")
+    past = _utc_iso(-timedelta(hours=2))
+    future = _utc_iso(timedelta(days=2))
 
     due = client.post(
         f"/api/trips/{trip_id}/reminders",

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from ..auth import create_access_token, get_current_user, hash_password, verify_password
 from ..database import get_session
-from ..models import TokenResponse, User, UserCreate, UserRead
+from ..models import TokenResponse, User, UserCreate, UserRead, UserUpdate
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -58,4 +58,21 @@ def login(
 
 @router.get("/me", response_model=UserRead)
 def me(user: User = Depends(get_current_user)):
+    return user
+
+
+@router.patch("/me", response_model=UserRead)
+def update_me(
+    payload: UserUpdate,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Profile + notification preferences (currently: email on/off)."""
+    data = payload.model_dump(exclude_unset=True)
+    if "display_name" in data and not (data["display_name"] or "").strip():
+        raise HTTPException(status_code=422, detail="display_name can't be empty")
+    user.sqlmodel_update(data)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
     return user
