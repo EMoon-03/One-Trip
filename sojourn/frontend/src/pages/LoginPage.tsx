@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { BrandMark } from '../components/ui'
+import { usePageTitle } from '../usePageTitle'
 
 export default function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  usePageTitle('Sign in')
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/'
 
@@ -13,14 +16,15 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const submit = async () => {
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
     setError(null)
     setBusy(true)
     try {
       await login(email, password)
       navigate(from, { replace: true })
-    } catch (e) {
-      setError((e as Error).message)
+    } catch (err) {
+      setError((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -28,54 +32,48 @@ export default function LoginPage() {
 
   return (
     <div className="auth-wrap">
-      <div className="auth-brand">
-        <span className="brand-dot" aria-hidden="true" />
-        <span className="brand-name">Sojourn</span>
-      </div>
+      <div className="auth-inner">
+        <Link to="/login" className="brand">
+          <BrandMark />
+          One Trip
+        </Link>
 
-      <div className="card auth-card">
-        <p className="eyebrow mono">Boarding pass, please</p>
         <h1 className="auth-title">Sign in</h1>
+        <p className="auth-lede">Your itineraries, budgets and reminders are waiting.</p>
 
-        <div className="auth-fields">
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              autoComplete="email"
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
-              placeholder="you@example.com"
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              autoComplete="current-password"
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()}
-            />
-          </label>
-        </div>
+        <form onSubmit={submit} noValidate>
+          <div className="auth-fields">
+            <label className="field">
+              Email
+              <input
+                type="email"
+                value={email}
+                autoComplete="email"
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+              />
+            </label>
+            <label className="field">
+              Password
+              <input
+                type="password"
+                value={password}
+                autoComplete="current-password"
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </label>
+          </div>
 
-        {error && <p className="form-error">{error}</p>}
-
-        <div className="form-actions">
-          <button
-            type="button"
-            className="btn primary wide"
-            disabled={!email || !password || busy}
-            onClick={submit}
-          >
+          <button type="submit" className="btn primary wide" disabled={busy || !email || !password}>
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
-        </div>
+          {error && <p className="form-error">{error}</p>}
+        </form>
 
         <p className="auth-alt">
-          New here? <Link to="/register">Create an account</Link>
+          New to One Trip? <Link to="/register">Create an account</Link>
         </p>
       </div>
     </div>

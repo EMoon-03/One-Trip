@@ -12,9 +12,9 @@ import axios, { AxiosError } from 'axios'
 export const TOKEN_KEY = 'sojourn.token'
 export const USER_KEY = 'sojourn.user'
 
-const client = axios.create({
-  headers: { 'Content-Type': 'application/json' },
-})
+// No default Content-Type: axios picks JSON for objects and form-encoding for
+// URLSearchParams (the OAuth2 login). Forcing JSON here made login 422.
+const client = axios.create()
 
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem(TOKEN_KEY) // read fresh — never a stale closure

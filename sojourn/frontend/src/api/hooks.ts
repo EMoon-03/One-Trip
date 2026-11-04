@@ -9,15 +9,23 @@ import type {
   DueReminder,
   Expense,
   ExpenseCreate,
+  ExpenseUpdate,
   ItineraryItem,
   ItineraryItemCreate,
+  ItineraryItemUpdate,
+  NotificationConfig,
+  NotificationTestResult,
+  PlaceDetails,
   PlaceResult,
   Reminder,
   ReminderCreate,
   ReminderStatus,
+  ReminderUpdate,
   Trip,
   TripCreate,
   TripSummary,
+  TripUpdate,
+  User,
 } from './types'
 
 export const qk = {
@@ -30,6 +38,7 @@ export const qk = {
   due: ['reminders', 'due'] as const,
   config: ['config'] as const,
   places: (q: string) => ['places', q] as const,
+  notifications: ['notifications', 'config'] as const,
 }
 
 // ---------------------------------------------------------------- meta ----
@@ -42,10 +51,18 @@ export const useConfig = () =>
   })
 
 /** Location search against /api/places/search (Google or OSM, server decides). */
-export const usePlaceSearch = (query: string) =>
+/**
+ * Location search against /api/places/search (Google or OSM, server decides).
+ * `session` groups a burst of typing into one Google billing session; it's
+ * not part of the cache key, so a repeated query is still served from cache.
+ */
+export const usePlaceSearch = (query: string, session: string) =>
   useQuery({
     queryKey: qk.places(query),
-    queryFn: () => api.get<PlaceResult[]>(`/api/places/search?q=${encodeURIComponent(query)}`),
+    queryFn: () =>
+      api.get<PlaceResult[]>(
+        `/api/places/search?q=${encodeURIComponent(query)}&session=${encodeURIComponent(session)}`,
+      ),
     enabled: query.trim().length >= 3,
     staleTime: 60_000,
     retry: false, // a geocoder hiccup shouldn't hammer the free OSM endpoint
@@ -70,6 +87,19 @@ export function useCreateTrip() {
   return useMutation({
     mutationFn: (body: TripCreate) => api.post<Trip>('/api/trips', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.trips }),
+  })
+}
+
+export function useUpdateTrip(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: TripUpdate) => api.patch<Trip>(`/api/trips/${id}`, body),
+    onSuccess: () => {
+      // ['trips'] is a prefix of every per-trip key, so this refreshes the
+      // list, the trip itself and its summary (the budget may have changed).
+      qc.invalidateQueries({ queryKey: qk.trips })
+      qc.invalidateQueries({ queryKey: qk.due }) // due rows show the trip name
+    },
   })
 }
 
@@ -101,6 +131,20 @@ export function useCreateItem(tripId: number) {
   })
 }
 
+export function useUpdateItem(tripId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: ItineraryItemUpdate }) =>
+      api.patch<ItineraryItem>(`/api/itinerary/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.itinerary(tripId) })
+      // moving a stop moves the reminders that count back from it
+      qc.invalidateQueries({ queryKey: qk.reminders(tripId) })
+      qc.invalidateQueries({ queryKey: qk.due })
+    },
+  })
+}
+
 export function useDeleteItem(tripId: number) {
   const qc = useQueryClient()
   return useMutation({
@@ -127,6 +171,18 @@ export function useCreateExpense(tripId: number) {
   return useMutation({
     mutationFn: (body: ExpenseCreate) =>
       api.post<Expense>(`/api/trips/${tripId}/expenses`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.expenses(tripId) })
+      qc.invalidateQueries({ queryKey: qk.summary(tripId) })
+    },
+  })
+}
+
+export function useUpdateExpense(tripId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: ExpenseUpdate }) =>
+      api.patch<Expense>(`/api/expenses/${id}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.expenses(tripId) })
       qc.invalidateQueries({ queryKey: qk.summary(tripId) })
@@ -174,6 +230,18 @@ export function useCreateReminder(tripId: number) {
   })
 }
 
+export function useUpdateReminder(tripId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: ReminderUpdate }) =>
+      api.patch<Reminder>(`/api/reminders/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.reminders(tripId) })
+      qc.invalidateQueries({ queryKey: qk.due }) // a new time may make it due (or not)
+    },
+  })
+}
+
 export function useSetReminderStatus(tripId?: number) {
   const qc = useQueryClient()
   return useMutation({
@@ -197,3 +265,42 @@ export function useDeleteReminder(tripId: number) {
     },
   })
 }
+
+// -------------------------------------------------------- notifications ---
+
+export const useNotificationConfig = () =>
+  useQuery({
+    queryKey: qk.notifications,
+    queryFn: () => api.get<NotificationConfig>('/api/notifications/config'),
+  })
+
+/** Profile + preferences (email reminders on/off). */
+export function useUpdateMe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<Pick<User, 'display_name' | 'email_notifications'>>) =>
+      api.patch<User>('/api/auth/me', body),
+    // Return the promise so the mutation stays "pending" until the config has
+    // reloaded — no flicker back to the old value in between.
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.notifications }),
+  })
+}
+
+export function useSendTestNotification() {
+  return useMutation({
+    mutationFn: () => api.post<NotificationTestResult[]>('/api/notifications/test'),
+  })
+}
+
+// ---------------------------------------------------------------- places ---
+// Plain functions (not hooks): they're called once, in response to a pick.
+
+/** Coordinates for a picked Google result; ends the autocomplete session. */
+export const fetchPlaceDetails = (placeId: string, session: string) =>
+  api.get<PlaceDetails>(
+    `/api/places/details?place_id=${encodeURIComponent(placeId)}&session=${encodeURIComponent(session)}`,
+  )
+
+/** IANA zone for a point (Google Time Zone API, or offline on the server). */
+export const fetchTimezone = (lat: number, lng: number) =>
+  api.get<{ timezone: string; source: 'google' | 'offline' }>(`/api/places/timezone?lat=${lat}&lng=${lng}`)
