@@ -11,7 +11,7 @@ from .database import init_db
 from .geo import GeoError
 from .geo.providers import browser_key, search_provider
 from .notify.settings import get_settings
-from .routers import auth, expenses, itinerary, notifications, places, reminders, trips
+from .routers import auth, expenses, itinerary, notifications, places, reminders, saved_places, trips
 
 
 @asynccontextmanager
@@ -59,6 +59,7 @@ app.include_router(itinerary.router)
 app.include_router(expenses.router)
 app.include_router(reminders.router)
 app.include_router(places.router)
+app.include_router(saved_places.router)
 app.include_router(notifications.router)
 
 

@@ -27,7 +27,7 @@ from datetime import datetime, time
 from enum import Enum
 
 from pydantic import EmailStr, field_validator, model_validator
-from sqlalchemy import Column, DateTime, String, UniqueConstraint
+from sqlalchemy import JSON, Column, DateTime, String, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 from .timeutil import UTCDateTime, is_valid_zone, utcnow
@@ -214,6 +214,8 @@ class ItineraryItem(ItineraryItemBase, table=True):
     # coordinates must be refreshed or deleted within 30 days.
     coords_source: str | None = Field(default=None, max_length=20, index=True)
     coords_fetched_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
+    # Set when the stop came from (or was saved to) the user's saved places.
+    saved_place_id: int | None = Field(default=None, foreign_key="savedplace.id", index=True)
 
     trip: Trip = Relationship(back_populates="items")
 
@@ -227,6 +229,7 @@ class ItineraryItemRead(ItineraryItemBase):
     trip_id: int
     coords_source: str | None
     coords_fetched_at: datetime | None
+    saved_place_id: int | None
 
 
 class ItineraryItemUpdate(SQLModel):
@@ -452,6 +455,154 @@ class PushSubscriptionCreate(SQLModel):
         if not value.startswith("https://"):
             raise ValueError("Push endpoints must be https URLs")
         return value
+
+
+# ---------------------------------------------------------------------------
+# Saved places + collections — places you want to go, with or without a trip
+# ---------------------------------------------------------------------------
+#
+#   User 1 ── * SavedPlace * ── * Collection      ("Tokyo eats", "Quiet spots")
+#   SavedPlace 1 ── * ItineraryItem               (each time it goes into a trip)
+#
+# Coordinates (and, for Google results, the address) follow the same 30-day
+# rule as stops: see app/geo/refresh.py. The name is the user's own label.
+
+MAX_TAGS = 12
+MAX_TAG_LEN = 30
+
+
+class PlaceStatus(str, Enum):
+    want = "want"        # want to visit
+    visited = "visited"
+
+
+def _clean_tags(tags: list[str] | None) -> list[str] | None:
+    """'  Late Night ', 'late night', '' -> ['late night'] (order kept)."""
+    if tags is None:
+        return None
+    out: list[str] = []
+    for t in tags:
+        t = " ".join(str(t).split()).lower()[:MAX_TAG_LEN]
+        if t and t not in out:
+            out.append(t)
+    if len(out) > MAX_TAGS:
+        raise ValueError(f"At most {MAX_TAGS} tags")
+    return out
+
+
+class CollectionPlace(SQLModel, table=True):
+    collection_id: int = Field(foreign_key="collection.id", primary_key=True)
+    place_id: int = Field(foreign_key="savedplace.id", primary_key=True)
+    added_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+
+
+class CollectionBase(SQLModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=300)
+
+
+class Collection(CollectionBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+
+
+class CollectionCreate(CollectionBase):
+    pass
+
+
+class CollectionUpdate(SQLModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=300)
+
+
+class CollectionRead(CollectionBase):
+    id: int
+    place_count: int
+
+
+class SavedPlaceBase(SQLModel):
+    name: str = Field(min_length=1, max_length=120)
+    category: ItineraryCategory = ItineraryCategory.activity
+    status: PlaceStatus = PlaceStatus.want
+    rating: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=1000)
+    address: str | None = Field(default=None, max_length=300)
+    place_id: str | None = Field(default=None, max_length=300)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class SavedPlace(SavedPlaceBase, table=True):
+    # Saving the same Google/OSM place twice would just make duplicates.
+    __table_args__ = (UniqueConstraint("user_id", "place_id", name="uq_saved_place_user_place"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    coords_source: str | None = Field(default=None, max_length=20, index=True)
+    coords_fetched_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
+    created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    updated_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+
+
+class SavedPlaceCreate(SavedPlaceBase):
+    tags: list[str] = Field(default_factory=list)
+    collection_ids: list[int] = Field(default_factory=list)
+
+    _tags = field_validator("tags")(_clean_tags)
+
+
+class SavedPlaceUpdate(SQLModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    category: ItineraryCategory | None = None
+    status: PlaceStatus | None = None
+    rating: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=1000)
+    address: str | None = Field(default=None, max_length=300)
+    place_id: str | None = Field(default=None, max_length=300)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    tags: list[str] | None = None
+    collection_ids: list[int] | None = None
+
+    _tags = field_validator("tags")(_clean_tags)
+
+
+class PlaceInTrip(SQLModel):
+    """One time this saved place went into a trip."""
+
+    stop_id: int
+    trip_id: int
+    trip_name: str
+    trip_timezone: str
+    date: date_type
+
+
+class SavedPlaceRead(SavedPlaceBase):
+    id: int
+    tags: list[str]
+    coords_source: str | None
+    collection_ids: list[int]
+    in_trips: list[PlaceInTrip]
+    created_at: datetime
+    updated_at: datetime
+
+
+class NearbySavedPlace(SavedPlaceRead):
+    distance_km: float
+    near_stop: str  # the trip stop it's closest to
+
+
+class AddToTrip(SQLModel):
+    trip_id: int
+    date: date_type
+    start_time: time | None = None
+
+
+class TagCount(SQLModel):
+    tag: str
+    count: int
 
 
 # ---------------------------------------------------------------------------
