@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useDueReminders, useSetReminderStatus } from './api/hooks'
 import { useAuth } from './auth/AuthContext'
 import NotificationSettings from './components/NotificationSettings'
 import { BrandMark, Icon } from './components/ui'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import SavedPage from './pages/SavedPage'
 import TripDetailPage from './pages/TripDetailPage'
 import TripsPage from './pages/TripsPage'
 import { disablePush } from './push'
@@ -220,6 +221,22 @@ function NotFound() {
   )
 }
 
+/** Trips | Saved. A trip page counts as "Trips". */
+function TopNav() {
+  const { pathname } = useLocation()
+  const onTrips = pathname === '/' || pathname.startsWith('/trips/')
+  return (
+    <nav className="topnav" aria-label="Main">
+      <Link to="/" className={onTrips ? 'active' : ''} aria-current={pathname === '/' ? 'page' : undefined}>
+        Trips
+      </Link>
+      <NavLink to="/saved" className={({ isActive }) => (isActive ? 'active' : '')}>
+        Saved
+      </NavLink>
+    </nav>
+  )
+}
+
 /** Top bar + container for signed-in pages. */
 function Layout({ children }: { children: ReactNode }) {
   return (
@@ -230,8 +247,9 @@ function Layout({ children }: { children: ReactNode }) {
       <header className="topbar">
         <Link to="/" className="brand">
           <BrandMark />
-          One Trip
+          <span className="brand-name">One Trip</span>
         </Link>
+        <TopNav />
         <div className="topbar-right">
           <DueInbox />
           <UserMenu />
@@ -265,6 +283,16 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <TripDetailPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/saved"
+        element={
+          <RequireAuth>
+            <Layout>
+              <SavedPage />
             </Layout>
           </RequireAuth>
         }

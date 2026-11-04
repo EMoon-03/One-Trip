@@ -17,8 +17,12 @@ from sqlmodel import Session, select
 from .auth import hash_password
 from .database import engine, init_db
 from .models import (
+    Collection,
+    CollectionPlace,
     Expense,
     ItineraryItem,
+    PlaceStatus,
+    SavedPlace,
     Reminder,
     ReminderType,
     Trip,
@@ -159,15 +163,16 @@ def seed() -> None:
         session.add_all(reminders)
         session.commit()
 
-        _seed_past_trip(session, user)
+        past_stops = _seed_past_trip(session, user)
+        _seed_saved_places(session, user, past_stops)
 
         print(f'Seeded "{DEMO_TRIP}" (trip #{trip.id}): '
               f"{len(items)} stops, {len(expenses)} expenses, {len(reminders)} reminders, "
-              "plus a past trip.")
+              "plus a past trip and saved places.")
         print(f"Login: {DEMO_EMAIL} / {DEMO_PASSWORD}")
 
 
-def _seed_past_trip(session: Session, user: User) -> None:
+def _seed_past_trip(session: Session, user: User) -> dict[str, ItineraryItem]:
     """A finished weekend, so the home page shows past trips too."""
     start = date.today() - timedelta(days=62)
     trip = Trip(
@@ -205,6 +210,52 @@ def _seed_past_trip(session: Session, user: User) -> None:
         Expense(trip_id=trip.id, description="Market + meals", amount=186.4, currency="USD",
                 category="food", spend_date=start + timedelta(days=1)),
     ])
+    session.commit()
+    return {stop.title: stop for stop in stops}
+
+
+def _seed_saved_places(session: Session, user: User, past_stops: dict[str, ItineraryItem]) -> None:
+    """Places saved before (and after) trips: the Saved page's demo data."""
+    eats = Collection(user_id=user.id, name="Tokyo eats", description="Ramen, coffee, late nights")
+    rainy = Collection(user_id=user.id, name="Rainy day", description="Indoors and worth it")
+    session.add_all([eats, rainy])
+    session.commit()
+
+    def place(name, category, lat, lng, address, tags, *, collections=(), notes=None,
+              status=PlaceStatus.want, rating=None, stop=None):
+        p = SavedPlace(user_id=user.id, name=name, category=category, lat=lat, lng=lng, address=address,
+                       tags=tags, notes=notes, status=status, rating=rating)
+        stamp_coords(p, utcnow())
+        session.add(p)
+        session.flush()
+        for c in collections:
+            session.add(CollectionPlace(collection_id=c.id, place_id=p.id))
+        if stop is not None:
+            stop.saved_place_id = p.id
+            session.add(stop)
+        return p
+
+    # Near the Tokyo trip's stops, so the itinerary suggests them.
+    place("Ichiran Shibuya", "food", 35.6612, 139.7010, "Jinnan, Shibuya, Tokyo", ["ramen", "late night"],
+          collections=[eats], notes="Solo booths. Order the noodles extra firm.")
+    place("Afuri Ebisu", "food", 35.6467, 139.7101, "Ebisu, Shibuya, Tokyo", ["ramen"], collections=[eats])
+    place("Glitch Coffee", "food", 35.6957, 139.7586, "Jimbocho, Chiyoda, Tokyo", ["coffee"],
+          collections=[eats], notes="Light roasts; go before 10am.")
+    place("Nezu Museum", "activity", 35.6624, 139.7173, "Minami-Aoyama, Minato, Tokyo", ["museum", "garden", "quiet"],
+          collections=[rainy])
+    place("Tokyo National Museum", "activity", 35.7188, 139.7765, "Ueno Park, Taito, Tokyo", ["museum"],
+          collections=[rainy], notes="Closed Mondays.")
+    # Somewhere for another trip.
+    place("Fushimi Inari", "activity", 34.9671, 135.7727, "Fushimi, Kyoto", ["shrine", "early morning"],
+          notes="Start at 7 to beat the crowds.")
+    # From the Seoul weekend: two rated, one not yet marked as visited.
+    place("Gwangjang Market", "food", 37.5700, 126.9996, "Jongno, Seoul", ["market", "street food"],
+          status=PlaceStatus.visited, rating=5, notes="Bindaetteok at the center stalls.",
+          stop=past_stops.get("Gwangjang Market dinner"))
+    place("Gyeongbokgung Palace", "activity", 37.5796, 126.9770, "Jongno, Seoul", ["history"],
+          status=PlaceStatus.visited, rating=4, stop=past_stops.get("Gyeongbokgung Palace"))
+    place("Bukhansan", "activity", 37.6587, 126.9779, "Bukhansan National Park, Seoul", ["hike"],
+          stop=past_stops.get("Bukhansan hike"))
     session.commit()
 
 

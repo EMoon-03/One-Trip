@@ -22,17 +22,21 @@ const PATHS = {
   chevron: 'M6 9l6 6 6-6',
   calendar: 'M4 6h16v14H4zM4 10h16M9 3v4M15 3v4',
   pin: 'M12 21s-7-6.1-7-11.5a7 7 0 0 1 14 0C19 14.9 12 21 12 21zM12 12a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  // saved places
+  bookmark: 'M6.5 4h11v16.5L12 16.5l-5.5 4z',
+  star: 'M12 3.6l2.55 5.2 5.7.83-4.13 4.02.98 5.68L12 16.65l-5.1 2.68.98-5.68-4.13-4.02 5.7-.83z',
+  search: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4.5-4.5',
 } as const
 
 export type IconName = keyof typeof PATHS
 
-export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+export function Icon({ name, size = 16, filled = false }: { name: IconName; size?: number; filled?: boolean }) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
+      fill={filled ? 'currentColor' : 'none'}
       stroke="currentColor"
       strokeWidth={2}
       strokeLinecap="round"

@@ -107,6 +107,7 @@ export interface ItineraryItem {
   timezone: string | null // null = the trip's zone
   coords_source: 'google' | 'nominatim' | 'manual' | null // set by the server
   coords_fetched_at: string | null
+  saved_place_id: number | null // the saved place it came from / was saved to
 }
 
 export interface ItineraryItemCreate {
@@ -224,4 +225,75 @@ export interface NotificationTestResult {
   channel: string
   ok: boolean
   detail: string
+}
+
+// ---------------------------------------------------------- saved places ---
+
+export type PlaceStatus = 'want' | 'visited'
+
+export interface PlaceInTrip {
+  stop_id: number
+  trip_id: number
+  trip_name: string
+  trip_timezone: string
+  date: string
+}
+
+export interface SavedPlace {
+  id: number
+  name: string
+  category: ItineraryCategory
+  status: PlaceStatus
+  rating: number | null
+  notes: string | null
+  address: string | null
+  place_id: string | null
+  lat: number | null
+  lng: number | null
+  tags: string[]
+  coords_source: 'google' | 'nominatim' | 'manual' | null
+  collection_ids: number[]
+  in_trips: PlaceInTrip[]
+  created_at: string
+  updated_at: string
+}
+
+export interface NearbySavedPlace extends SavedPlace {
+  distance_km: number
+  near_stop: string
+}
+
+export interface SavedPlaceCreate {
+  name: string
+  category: ItineraryCategory
+  status?: PlaceStatus
+  rating?: number | null
+  notes?: string | null
+  address?: string | null
+  place_id?: string | null
+  lat?: number | null
+  lng?: number | null
+  tags?: string[]
+  collection_ids?: number[]
+}
+
+export type SavedPlaceUpdate = Partial<SavedPlaceCreate>
+
+export interface SavedPlaceFilters {
+  status?: PlaceStatus
+  tag?: string
+  collection_id?: number
+  q?: string
+}
+
+export interface Collection {
+  id: number
+  name: string
+  description: string | null
+  place_count: number
+}
+
+export interface TagCount {
+  tag: string
+  count: number
 }

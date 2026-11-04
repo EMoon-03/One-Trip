@@ -65,7 +65,7 @@ From the [Google Maps Platform Service Specific Terms](https://cloud.google.com/
 | Rule | What the code does |
 |---|---|
 | **Places content can't be used with a non-Google map.** | `GEOCODER=auto` only uses Google search when *both* keys are set (`app/geo/providers.py`). `GEOCODER=google` with the browser key missing is refused with an explanation. If the browser key is removed later, the OpenStreetMap view leaves out Google-sourced stops and says why (`TripMap.tsx`). |
-| **Latitude/longitude from Places may be cached for up to 30 consecutive days, then must be deleted.** Place IDs may be kept. | Every stop records `coords_source` (google / nominatim / manual) and `coords_fetched_at`. The worker's hourly pass (`app/geo/refresh.py`) re-fetches Google coordinates from day 25. If that fails, it deletes them at day 30 and keeps the `place_id`, so a later pass can restore them. OpenStreetMap and hand-typed coordinates are never touched. |
+| **Latitude/longitude from Places may be cached for up to 30 consecutive days, then must be deleted.** Place IDs may be kept. | Every stop records `coords_source` (google / nominatim / manual) and `coords_fetched_at`. The worker's hourly pass (`app/geo/refresh.py`) re-fetches Google coordinates from day 25. If that fails, it deletes them at day 30 and keeps the `place_id`, so a later pass can restore them. OpenStreetMap and hand-typed coordinates are never touched. Saved places follow the same rule, and their address (Google's `formattedAddress`) is refreshed and deleted along with the coordinates; the name is the user's own label. Adding a saved place to a trip copies its `coords_fetched_at`, so the 30 days don't restart, and doesn't copy a Google address into the stop. |
 | **Attribution** when Places data is shown outside a Google map. | Google results in the search dropdown carry the text **Google Maps**: untranslated, gray #5E5E5E, 12px, regular weight. That's the policy's text option for tight spaces. |
 | **Server keys stay on the server.** | Only `/api/places/*` calls Google; the browser never sees `GOOGLE_MAPS_API_KEY`. All three endpoints require sign-in. |
 
@@ -85,7 +85,7 @@ For a personal or portfolio app this rounds to **$0**. Even 100 picks a day is a
 
 ## Testing without Google
 
-- `python -m pytest tests/test_places.py`: 17 tests against a mocked Google (httpx `MockTransport`). They check the exact requests sent (session tokens, field masks, which key) and how Google's errors, time-zone fallbacks and the 30-day refresh are handled.
+- `python -m pytest tests/test_places.py`: 17 tests against a mocked Google (httpx `MockTransport`). They check the exact requests sent (session tokens, field masks, which key) and how Google's errors, time-zone fallbacks and the 30-day refresh are handled. `tests/test_saved_places.py` adds the same 30-day checks for saved places.
 - `GOOGLE_PLACES_BASE` and `GOOGLE_MAPS_BASE` point the app at a stand-in server. That's how the full browser flow was tested end to end without real Google calls. Leave them unset in normal use.
 - The test suite clears every Google variable before each test, so your real keys can never be called, or billed, by a test run.
 

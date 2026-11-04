@@ -16,7 +16,7 @@ const emit = () => {
   listeners.forEach((l) => l())
 }
 
-export const pendingKey = (kind: 'stop' | 'expense' | 'reminder', id: number) => `${kind}:${id}`
+export const pendingKey = (kind: 'stop' | 'expense' | 'reminder' | 'saved' | 'collection', id: number) => `${kind}:${id}`
 
 export function markPending(key: string) {
   pending.add(key)
