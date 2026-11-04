@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import type {
   AppConfig,
+  Collection,
   DueReminder,
   Expense,
   ExpenseCreate,
@@ -13,6 +14,7 @@ import type {
   ItineraryItem,
   ItineraryItemCreate,
   ItineraryItemUpdate,
+  NearbySavedPlace,
   NotificationConfig,
   NotificationTestResult,
   PlaceDetails,
@@ -21,6 +23,11 @@ import type {
   ReminderCreate,
   ReminderStatus,
   ReminderUpdate,
+  SavedPlace,
+  SavedPlaceCreate,
+  SavedPlaceFilters,
+  SavedPlaceUpdate,
+  TagCount,
   Trip,
   TripCreate,
   TripSummary,
@@ -39,6 +46,13 @@ export const qk = {
   config: ['config'] as const,
   places: (q: string) => ['places', q] as const,
   notifications: ['notifications', 'config'] as const,
+  // Everything about saved places lives under one prefix, so a single
+  // invalidation refreshes the list, tags, collections and nearby panels.
+  saved: ['saved'] as const,
+  savedList: (f: SavedPlaceFilters) => ['saved', 'list', f] as const,
+  savedTags: ['saved', 'tags'] as const,
+  collections: ['saved', 'collections'] as const,
+  nearby: (tripId: number) => ['saved', 'nearby', tripId] as const,
 }
 
 // ---------------------------------------------------------------- meta ----
@@ -109,6 +123,7 @@ export function useDeleteTrip() {
     mutationFn: (id: number) => api.del(`/api/trips/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.trips })
+      qc.invalidateQueries({ queryKey: qk.saved }) // "in your trips" lists
       qc.invalidateQueries({ queryKey: qk.due })
     },
   })
@@ -151,6 +166,7 @@ export function useDeleteItem(tripId: number) {
     mutationFn: (itemId: number) => api.del(`/api/itinerary/${itemId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.itinerary(tripId) })
+      qc.invalidateQueries({ queryKey: qk.saved }) // "in your trips" + nearby suggestions
       // deleting a stop clears activity links on expenses & reminders:
       qc.invalidateQueries({ queryKey: qk.expenses(tripId) })
       qc.invalidateQueries({ queryKey: qk.reminders(tripId) })
@@ -304,3 +320,112 @@ export const fetchPlaceDetails = (placeId: string, session: string) =>
 /** IANA zone for a point (Google Time Zone API, or offline on the server). */
 export const fetchTimezone = (lat: number, lng: number) =>
   api.get<{ timezone: string; source: 'google' | 'offline' }>(`/api/places/timezone?lat=${lat}&lng=${lng}`)
+
+// ---------------------------------------------------------- saved places ---
+
+function savedQuery(f: SavedPlaceFilters): string {
+  const p = new URLSearchParams()
+  if (f.status) p.set('status', f.status)
+  if (f.tag) p.set('tag', f.tag)
+  if (f.collection_id !== undefined) p.set('collection_id', String(f.collection_id))
+  if (f.q?.trim()) p.set('q', f.q.trim())
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+
+export const useSavedPlaces = (filters: SavedPlaceFilters = {}) =>
+  useQuery({
+    queryKey: qk.savedList(filters),
+    queryFn: () => api.get<SavedPlace[]>(`/api/saved-places${savedQuery(filters)}`),
+    placeholderData: (prev) => prev, // keep the grid while a filter changes
+  })
+
+export const useSavedTags = () =>
+  useQuery({ queryKey: qk.savedTags, queryFn: () => api.get<TagCount[]>('/api/saved-places/tags') })
+
+export const useCollections = () =>
+  useQuery({ queryKey: qk.collections, queryFn: () => api.get<Collection[]>('/api/collections') })
+
+export const useNearbySaved = (tripId: number) =>
+  useQuery({
+    queryKey: qk.nearby(tripId),
+    queryFn: () => api.get<NearbySavedPlace[]>(`/api/trips/${tripId}/saved-places/nearby`),
+  })
+
+export function useCreateSaved() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: SavedPlaceCreate) => api.post<SavedPlace>('/api/saved-places', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.saved }),
+  })
+}
+
+export function useUpdateSaved() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: SavedPlaceUpdate }) =>
+      api.patch<SavedPlace>(`/api/saved-places/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.saved }),
+  })
+}
+
+export function useDeleteSaved() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/saved-places/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.saved })
+      qc.invalidateQueries({ queryKey: qk.trips }) // stops lose their bookmark
+    },
+  })
+}
+
+export function useAddSavedToTrip() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: { trip_id: number; date: string; start_time?: string | null } }) =>
+      api.post<ItineraryItem>(`/api/saved-places/${id}/add-to-trip`, body),
+    onSuccess: (_stop, { body }) => {
+      qc.invalidateQueries({ queryKey: qk.itinerary(body.trip_id) })
+      qc.invalidateQueries({ queryKey: qk.saved })
+    },
+  })
+}
+
+/** Bookmark a stop (returns the existing saved place if it's already saved). */
+export function useSaveStop(tripId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (itemId: number) => api.post<SavedPlace>(`/api/itinerary/${itemId}/save`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.itinerary(tripId) })
+      qc.invalidateQueries({ queryKey: qk.saved })
+    },
+  })
+}
+
+export function useCreateCollection() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; description?: string | null }) =>
+      api.post<Collection>('/api/collections', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.collections }),
+  })
+}
+
+export function useUpdateCollection() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: { name?: string; description?: string | null } }) =>
+      api.patch<Collection>(`/api/collections/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.collections }),
+  })
+}
+
+export function useDeleteCollection() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.del(`/api/collections/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.saved }),
+  })
+}

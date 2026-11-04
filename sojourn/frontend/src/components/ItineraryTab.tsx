@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { fetchTimezone, useCreateItem, useDeleteItem, useItinerary, useUpdateItem } from '../api/hooks'
+import { Link } from 'react-router-dom'
+import { fetchTimezone, useCreateItem, useDeleteItem, useItinerary, useSaveStop, useUpdateItem } from '../api/hooks'
 import type { ItineraryCategory, ItineraryItem, ItineraryItemCreate, Trip } from '../api/types'
 import { pendingKey, usePendingDeletes } from '../pendingDeletes'
 import { categoryColor, dayNumber, eachDate, formatDate, formatTime, label } from '../utils'
 import { browserZone, differsFromBrowser, zoneAbbr, zoneCity } from '../time'
+import NearbySaved from './NearbySaved'
 import PlaceSearchInput from './PlaceSearchInput'
 import ZoneSelect from './ZoneSelect'
 import { useToast } from './Toast'
@@ -214,7 +216,8 @@ export default function ItineraryTab({
 }) {
   const { data: all = [], isLoading } = useItinerary(trip.id)
   const deleteItem = useDeleteItem(trip.id)
-  const { undoableDelete } = useToast()
+  const saveStop = useSaveStop(trip.id)
+  const { undoableDelete, toast } = useToast()
   const pending = usePendingDeletes()
   const [editingId, setEditingId] = useState<number | null>(null)
   const [addingDate, setAddingDate] = useState<string | null>(null)
@@ -242,6 +245,12 @@ export default function ItineraryTab({
 
   const remove = (stop: ItineraryItem) =>
     undoableDelete({ key: pendingKey('stop', stop.id), label: stop.title, commit: () => deleteItem.mutate(stop.id) })
+
+  const save = (stop: ItineraryItem) =>
+    saveStop.mutate(stop.id, {
+      onSuccess: (place) => toast({ message: `Saved “${place.name}” to your places` }),
+      onError: (err) => toast({ message: (err as Error).message, tone: 'error' }),
+    })
 
   const inRange = (date: string) => date >= trip.start_date && date <= trip.end_date
 
@@ -317,7 +326,19 @@ export default function ItineraryTab({
                       ) : (
                         <>
                           <div className="stop-body">
-                            <p className="stop-title">{stop.title}</p>
+                            <p className="stop-title">
+                              {stop.title}
+                              {stop.saved_place_id !== null && (
+                                <Link
+                                  to={`/saved#place-${stop.saved_place_id}`}
+                                  className="stop-saved"
+                                  aria-label={`${stop.title} is in your saved places`}
+                                  title="In your saved places"
+                                >
+                                  <Icon name="bookmark" size={13} filled />
+                                </Link>
+                              )}
+                            </p>
                             <p className="stop-meta">
                               <span className="cat" style={lineColor(stop.category)}>
                                 {label(stop.category)}
@@ -328,6 +349,18 @@ export default function ItineraryTab({
                           </div>
 
                           <div className="row-actions">
+                            {stop.saved_place_id === null && (
+                              <button
+                                type="button"
+                                className="icon-btn edit"
+                                aria-label={`Save ${stop.title} to your places`}
+                                title="Save to your places"
+                                onClick={() => save(stop)}
+                                disabled={saveStop.isPending}
+                              >
+                                <Icon name="bookmark" size={15} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="icon-btn edit"
@@ -377,6 +410,8 @@ export default function ItineraryTab({
       )}
 
       <AddPanel label="Add stop">{(close) => <StopForm trip={trip} onClose={close} />}</AddPanel>
+
+      {!isLoading && <NearbySaved trip={trip} />}
     </div>
   )
 }

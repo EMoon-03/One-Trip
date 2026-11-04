@@ -4,6 +4,8 @@
 
 A travel itinerary + finance planner + reminders app, multi-user. One **Trip** is the hub; itinerary stops, expenses and reminders all hang off it, and every trip belongs to a **User**. The two optional links are the signature of the design: an expense can belong to a specific stop ("dinner owns its $52"), and a reminder can count back from one ("leave 3h before the flight"), following it if the flight moves.
 
+**Saved places** keep a list of places worth the trip, before there's a trip: tag them, rate them, mark them visited, group them into collections ("Tokyo eats"). One click drops a saved place onto a day of a trip, location and time zone included; any stop can be bookmarked back; and a trip's itinerary suggests saved places near its stops.
+
 The UI shows each trip as a route: a day strip on the home page and trip page, every day on the itinerary (planned or not), with dark mode, undo for deletes, and a bottom tab bar on phones.
 
 Reminders reach you **with the app closed**, by email or browser notification. They're sent by a background worker in the right time zone: the trip's, the stop's, or yours. The design is explained in [`sojourn/docs/reminders.md`](sojourn/docs/reminders.md).
@@ -53,7 +55,7 @@ Sign in with **demo@sojourn.app / wanderlust**, or register your own account. Th
 
 With no `.env`, reminders are "delivered" to the worker's log. To get real email or browser notifications, see [Running it](sojourn/docs/reminders.md#running-it). For one terminal fewer in development, `EMBEDDED_WORKER=true` runs the worker inside the API.
 
-> **Upgrading from an earlier version?** The schema changed (time zones, delivery tables). Delete `backend/sojourn.db` and re-run the seed.
+> **Upgrading from an earlier version?** The schema changed (time zones, delivery tables, saved places). Delete `backend/sojourn.db` and re-run the seed.
 
 ## How reminders work
 
@@ -63,6 +65,15 @@ The short version (the long one is in [`docs/reminders.md`](sojourn/docs/reminde
 - **"Before a stop."** "3 hours before the flight" is recomputed whenever the flight's date, time or zone changes.
 - **The worker** claims due reminders and deliveries with conditional `UPDATE`s and leases. Running two workers is safe, and a crash mid-send gets retried, not lost (at-least-once). Transient failures back off 1, 2, 4… minutes; permanent ones stop; anything more than 12h overdue is skipped rather than sent late.
 - **Channels** share one interface (`available` / `wants` / `send`): console for dev, email over any SMTP provider, Web Push to every browser you switch on. The bell's **Notification settings** has the switches and a **Send test** button.
+
+## How saved places work
+
+- **A saved place belongs to you, not to a trip.** Name (your label), where (searched like a stop, so it gets coordinates), type, notes, tags, a 1–5 rating, and a status: *want to go* or *been there*. Collections are named groups; a place can be in several, and deleting a collection keeps its places.
+- **Saved place → trip.** "Add to trip" makes a stop on the day you pick, with the coordinates, category and, if the place is in another zone than the trip, its own time zone. The stop remembers where it came from (`saved_place_id`), so the place card lists every trip it's on and the stop shows a bookmark.
+- **Trip → saved place.** The bookmark on a stop saves it; saving the same place twice (same place id) returns the first save instead of a duplicate.
+- **Nearby.** `GET /api/trips/{id}/saved-places/nearby` returns your want-to-go places within 30 km (haversine) of any stop on the trip, closest first, minus the ones already on it. The itinerary shows them under the route.
+- **After the trip.** A want-to-go place whose stop date has passed asks "You were there on … Mark visited and rate it", and sorts first until you do.
+- **Google's 30-day rule applies here too.** A saved place's coordinates *and* address from Google are refreshed by the worker from day 25 and deleted at day 30 if they can't be; copying a place into a trip copies its fetch date rather than restarting the clock, and a Google address isn't copied into the stop.
 
 ## How auth works
 
@@ -90,10 +101,10 @@ Picking a place fills in coordinates *and* a time zone: a trip's destination set
 
 ```fish
 cd sojourn/backend
-python -m pytest -q        # 77 tests, in-memory SQLite, ~30s
+python -m pytest -q        # 104 tests, in-memory SQLite, ~35s
 ```
 
-Covered: the register/login/me flow and validation, 401s on every protected route, **cross-user isolation**, CRUD + validation, itinerary ordering, cross-trip link rejection, stop deletion unlinking (not deleting), summary math, and cascade delete. For reminders: time-zone conversion including DST, "before a stop" rescheduling, and the worker's guarantees (exactly-once on the happy path, backoff, lease expiry after a crash, two concurrent workers, stale skips, re-arming). Also email and push error handling, the real Web Push wire format (VAPID signature checked, payload decrypted), and the Google integration against a mocked Google (session tokens, field-mask cost tiers, error messages, the key-pairing rule, the 30-day coordinate refresh).
+Covered: the register/login/me flow and validation, 401s on every protected route, **cross-user isolation**, CRUD + validation, itinerary ordering, cross-trip link rejection, stop deletion unlinking (not deleting), summary math, and cascade delete. For reminders: time-zone conversion including DST, "before a stop" rescheduling, and the worker's guarantees (exactly-once on the happy path, backoff, lease expiry after a crash, two concurrent workers, stale skips, re-arming). Also email and push error handling, the real Web Push wire format (VAPID signature checked, payload decrypted), and the Google integration against a mocked Google (session tokens, field-mask cost tiers, error messages, the key-pairing rule, the 30-day coordinate refresh). For saved places: tag cleanup, filters, duplicate detection, collections (counts, unique names, delete keeps places), isolation between users, add-to-trip (zones, date range, the 30-day clock), bookmarking a stop, nearby distances, and the 30-day rule for saved places' coordinates and address.
 
 ## API reference
 
@@ -121,6 +132,14 @@ Covered: the register/login/me flow and validation, 401s on every protected rout
 | GET | `/api/places/search?q=&session=` | place search via the configured provider |
 | GET | `/api/places/details?place_id=&session=` | coordinates for a picked Google result (closes the billing session) |
 | GET | `/api/places/timezone?lat=&lng=` | IANA time zone for a point |
+| GET/POST | `/api/saved-places` | your saved places (`?status=&tag=&collection_id=&q=`) / save one |
+| GET | `/api/saved-places/tags` | your tags, with counts |
+| GET/PATCH/DELETE | `/api/saved-places/{id}` | one saved place (delete keeps the stops made from it) |
+| POST | `/api/saved-places/{id}/add-to-trip` | `{trip_id, date, start_time?}` → a new stop |
+| POST | `/api/itinerary/{id}/save` | bookmark a stop (201 new, 200 if already saved) |
+| GET | `/api/trips/{id}/saved-places/nearby` | want-to-go places within 30 km of the trip's stops |
+| GET/POST | `/api/collections` | your collections, with place counts / create |
+| PATCH/DELETE | `/api/collections/{id}` | rename / delete (its places stay saved) |
 
 ## Switching to MySQL
 
@@ -157,9 +176,9 @@ sojourn/
       worker.py        python -m app.worker
       notify/          channels (console, email, push), settings, VAPID key generator
       geo/             Google Places (New) + Time Zone, Nominatim, provider rules, 30-day refresh
-      seed.py          demo user + Tokyo trip
-      routers/         auth · trips · itinerary · expenses · reminders · notifications · places
-    tests/             conftest + test_api · test_reminders · test_places (77 tests)
+      seed.py          demo user + Tokyo trip + saved places
+      routers/         auth · trips · itinerary · expenses · reminders · notifications · places · saved_places
+    tests/             conftest + test_api · test_reminders · test_places · test_saved_places (104 tests)
     requirements*.txt  bounded ranges; requirements.lock = the exact tested set
     .env.example       every setting, with defaults
   frontend/
@@ -167,8 +186,8 @@ sojourn/
     src/
       api/             types · client (axios + interceptors) · hooks
       auth/            AuthContext
-      pages/           Login · Register · Trips · TripDetail
-      components/      tabs, forms, DayStrip, Toast (undo), ConfirmDialog, NotificationSettings, ZoneSelect, …
+      pages/           Login · Register · Trips · TripDetail · Saved
+      components/      tabs, forms, DayStrip, Toast (undo), ConfirmDialog, SavedPlaceForm, AddToTripDialog, NearbySaved, …
       theme.ts         light / dark / system (applied before first paint by index.html)
       pendingDeletes.ts  the 5-second undo window behind every delete
       push.ts          subscribe/unsubscribe this browser
